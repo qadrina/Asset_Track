@@ -1,0 +1,306 @@
+﻿@page "/"
+@page "/{Spot_Id}"
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Net.Http
+@using System.Diagnostics
+@using Asset_Track.Shared.StoredProcedures
+
+@inject NavigationManager nav
+@inject IJSRuntime JS
+@inject HttpClient client
+
+@implements IAsyncDisposable
+
+<PageTitle>Asset Tracking | Index | @Spot_Id</PageTitle>
+<style>
+    .th {
+        align-content: center;
+        vertical-align: middle;
+        text-align: center;
+    }
+
+    .tr {
+        align-content: center;
+        vertical-align: middle;
+        text-align: center;
+    }
+
+    .td {
+        vertical-align: middle;
+        text-align: left;
+    }
+
+    #tblSpot tbody tr:hover {
+        color: blue  !important;
+        background-color: cyan !important;
+    }
+
+    #tblAsset tbody tr:hover {
+        color: red !important;
+        /*background-color: lightgreen !important;*/
+    }
+
+    .row-hightlight {
+        color: red  !important;
+        background-color: yellow !important;
+    }
+
+    /*table tbody tr:focus {
+        color: yellow;
+        background-color: red !important;
+    }*/
+    /*table.table-hover tbody tr td:hover {
+        color: red;*/ /*dodgerblue*/
+    /*background-color: lightyellow !important;
+    }*/
+
+</style>
+
+@if (spots != null)
+{
+    <table id="tblSpot" class="table table-sm table-striped table-bordered border-5 border-secondary" style="width:60%; margin:auto" >
+        <thead>
+            <tr>
+                <th colspan="20" class="th">
+                    <h4>Asset Tracking ● POB ● Mustering System ● @spots.Sum( x => x.Asset_Count)</h4>
+                </th>
+            </tr>
+            <tr>
+                <th class="th">
+					Spot ID
+                </th>
+                <th class="th">
+					Spot Title
+                </th>
+                <th class="th">
+					POB
+				</th>					   					 
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var spot in spots.Select((c, _row) => new {c, _row}))
+           {
+                <tr @key="spot" scope="row" @onclick="(p) => Spot_Click(p, true, spot.c!, spot._row)"
+                    class="tr @(spot._row == row? "row-hightlight" : "")">								   
+                    <td class="td">
+						@spot.c.Spot_Id
+					</td>						 							   
+                    <td class="td">
+						@spot.c.Spot_Title
+					</td>						 								   
+                    <td class="td">
+						<span style="font-weight: bolder; font-size: larger;">@spot.c.Asset_Count</span>
+                    </td>
+               </tr>
+           }
+        </tbody>
+    </table>
+	<br />	  
+}
+
+@if (assets.Count > 0)
+{
+    <table id="tblAsset" class="table table-sm table-striped table-bordered border-3 border-primary table-light"
+	  style="position: absolute; left: @(clientX)px; top: @(clientY)px; width: 400px;">																						
+        <thead>
+            <tr>								
+                <th colspan="20" class="th">
+					<h5>@spot.Spot_Id ● @assets.Count</h5>
+                </th>
+            </tr>
+            <tr>
+                <th class="th">
+					Asset ID
+				</th>			 			   
+                <th class="th">
+					Asset Title
+                </th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var a in assets)
+           {
+               <tr @key="a" scope="row" class="tr">
+                   <td class="td">
+						@a.Asset_Id
+				   </td>	 			   
+                   <td class="td">
+						@a.Asset_Title
+                   </td>
+               </tr>
+           }
+        </tbody>
+    </table>
+}
+
+@code {
+	#pragma warning disable CS8600 // Possible null reference argument.
+    #pragma warning disable CS8601 // Possible null reference argument.
+    #pragma warning disable CS8602 // Possible null reference argument.
+    #pragma warning disable CS8603 // Possible null reference argument.
+    #pragma warning disable CS8604 // Possible null reference argument.
+    #pragma warning disable CS8605 // Possible null reference argument.																   
+    [Parameter]
+    public string? Spot_Id { get; set; }
+
+    private HubConnection? hubConnection;
+
+    List<spAsset> assets = new List<spAsset>();
+    spAsset asset = new spAsset();
+    List<spSpot> spots = new List<spSpot>();
+    spSpot spot = new spSpot();
+
+    #region SIGNAL R
+    protected override async Task OnInitializedAsync() {
+        if (String.IsNullOrEmpty(Spot_Id))
+            Spot_Id = "FIN";
+
+        Console.WriteLine("🟣Spot_Id => {0}", Spot_Id);
+
+        #region Signal R Listener
+        hubConnection = new HubConnectionBuilder()
+                .WithUrl(nav.ToAbsoluteUri("assethub"))
+                .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5) })
+                .Build();
+
+        // LISTENER 1 for Update
+        hubConnection.On<string, string, string, spAsset, int>("ReceiveEntity", async (_sender, _receiver, _connectionId, _asset, _increase) => 
+		{
+            Console.WriteLine("⏹ {0} {1} {2}", _asset.Asset_Id, _asset.Spot_Ex, _asset.Spot_Id);
+            await Spots_Refresh(_asset);
+
+            await InvokeAsync(StateHasChanged);
+        });
+
+        //LISTENER 2 for display message/debugging
+        hubConnection.On<string, string, string, string>("ReceiveMessage", async (_sender, _receiver, _connectionId, _message) =>
+        {
+            //Process the incomming message here...
+            Console.WriteLine("⭕ {0}", _message);
+
+            await Task.CompletedTask;
+        });
+        #endregion
+
+        #region Signal R Connection Status
+
+        hubConnection.Closed += async (error) =>
+        {
+            // Consider waiting for some random delay (to prevent overloading the server, in case the disconnection was because the server went down)
+            await Task.Delay(new Random().Next(0, 5) * 1000);
+            Console.WriteLine("🔴Disconnected...");
+            await hubConnection.StartAsync();
+        };
+
+        hubConnection.Reconnecting += (error) =>
+        {
+            Debug.Assert(hubConnection.State == HubConnectionState.Reconnecting);
+            Console.WriteLine("🟡Reconnecting...");
+
+            return Task.CompletedTask;
+        };
+
+        hubConnection.Reconnected += async (connectionId) =>
+        {
+            Debug.Assert(hubConnection.State == HubConnectionState.Connected);
+            Console.WriteLine("🟢Reconnected...");
+
+            await hubConnection.SendAsync("AddToGroup", Spot_Id);
+            //await Load_Spots();
+            base.StateHasChanged();
+        };
+
+        await hubConnection.StartAsync();
+
+        #endregion
+
+    }
+
+    #endregion
+
+    protected override async Task OnParametersSetAsync()
+    {
+		// Future implements
+        await hubConnection.SendAsync("AddToGroup", Spot_Id);
+        await Spots_Load();
+        //return base.OnParametersSetAsync();
+    }
+
+	// CALL LISTENER 1					  
+    async Task Spots_Refresh(spAsset _asset) 
+    {
+        spSpot? spot_nw = spots.Where(s => s.Spot_Id == _asset.Spot_Id).FirstOrDefault();
+        spSpot? spot_ex = spots.Where(s => s.Spot_Id == _asset.Spot_Ex).FirstOrDefault();
+
+        spot_nw.Asset_Count++;
+        spot_ex.Asset_Count--;
+
+		// Refresh child			   
+        if (isSpot_Click)
+        {
+            Console.WriteLine("🔵 isSpot_Click {0}", isSpot_Click);
+            if (spot_nw.Spot_Id == spot.Spot_Id || spot_ex.Spot_Id == spot.Spot_Id)
+            {
+                isSpot_Click = false;
+                await Spot_Click(new MouseEventArgs(), false, spot, row);
+            }
+        }
+
+        await Task.CompletedTask;
+    }
+
+    async Task Spots_Load()
+    {
+        this.spots = await client.GetFromJsonAsync<List<spSpot>>($"api/Asset/spSpots");
+    }
+
+    #region Spot Click
+
+    bool isSpot_Click = false;
+    string? _spot_Id = "";
+    int row = -1;
+    double clientX = 0;
+    double clientY = 0;
+
+    async Task Spot_Click(MouseEventArgs m, bool isSetCoord, spSpot _spot, int _row)
+    {
+        row = _row;
+        spot = _spot;
+
+        if (!isSpot_Click || _spot_Id != _spot.Spot_Id) 
+        {
+            this.assets = await client.GetFromJsonAsync<List<spAsset>>($"api/Asset/spAssets/{_spot.Spot_Id}");
+            isSpot_Click = true;
+            _spot_Id = _spot.Spot_Id;
+        }
+        else 
+        {
+            this.assets = new List<spAsset>();
+            isSpot_Click = false;
+            _spot_Id = "";
+        }
+
+        if (isSetCoord)
+        {
+            clientX = m.ClientX;
+            clientY = m.ClientY + 10;
+            Console.WriteLine("🔵 Coordinate X:{0} Y:{0}", clientX, clientY);
+        }
+
+    }
+
+    #endregion
+
+	public bool IsConnected => 
+		hubConnection?.State == HubConnectionState.Connected;
+
+    public async ValueTask DisposeAsync() 
+    {
+        if (hubConnection != null)
+        {
+            await hubConnection.SendAsync("RemoveFromGroup", Spot_Id);
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+}

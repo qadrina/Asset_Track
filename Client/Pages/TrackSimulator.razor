@@ -1,0 +1,84 @@
+﻿@page "/TrackSimulator"
+
+@using System.Net.Http
+@using Asset_Track.Shared.StoredProcedures
+@inject HttpClient client
+
+<style>
+    .form-detail {
+        display: block;
+        width: 75%;
+        height: 2.375rem;
+        padding: 0.375rem 0.75rem;
+        color: #282e33;
+        background-color: #fff;
+        background-clip: padding-box;
+        border: 1px solid #ced4da;
+        border-radius: 0.25rem;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    }
+</style>
+
+<PageTitle>Asset Tracking | Track Simulator</PageTitle>
+<h3>Track Simulator</h3>
+
+<div class="col-auto">
+    <select @onchange="(e) => par.spAsset!.Asset_Id = e.Value!.ToString()" value="@par.spAsset!.Asset_Id" class="form-detail">
+        <option value="">⏹ Select Asset</option>
+        @foreach (var cg in assets!)
+        {
+            <option value="@cg.Asset_Id">@(cg.Spot_Id + " ● " + cg.Asset_Title)</option>
+        }
+    </select>
+</div>
+<br />
+<div class="col-auto">
+    <select @onchange="(e)=> par.spAsset.Spot_Id = e.Value!.ToString()" value="@par.spAsset.Spot_Id" class="form-detail">
+        <option value="">⏹ Select Spot</option>
+        @foreach (var cg in spots!)
+        {
+            <option value="@cg.Spot_Id">@(cg.Spot_Id + " ● " + cg.Spot_Title)</option>
+        }
+    </select>
+</div>
+<br />
+<div class="col-auto">
+    <input type="text" @bind="par.sender" class="form-control" placeholder="sender">
+</div>
+<br />
+<div class="col-auto">
+    <input type="text" @bind="par.receiver" class="form-control" placeholder="receiver"/>
+</div>
+<br />
+<div class="col-auto">
+    <button class="btn btn-outline-primary" @onclick="spAsset_Update">Update</button>
+</div>
+
+@code {
+    List<spSpot>? spots = new List<spSpot>();
+    spSpot? spot = new spSpot();
+    List<spAsset>? assets = new List<spAsset>();
+    spAsset? asset = new spAsset();
+
+    spSpot_Parameter par = new spSpot_Parameter();
+
+    protected override async Task OnInitializedAsync() 
+    {
+        await spAsset_Reload();
+        this.spots = await client.GetFromJsonAsync<List<spSpot>>($"api/Asset/spSpots");
+        par.sender = "Simulator";
+        par.receiver = "FIN";
+    }
+
+    async Task spAsset_Reload() 
+    {
+        string _Spot_Id = "ALL";
+        this.assets = await client.GetFromJsonAsync<List<spAsset>>($"api/Asset/spAssets/{_Spot_Id}");
+    }
+
+    async Task spAsset_Update() 
+    {
+        await client.PostAsJsonAsync($"api/Asset/spAsset_Update", par);
+        await spAsset_Reload();
+    }
+}
